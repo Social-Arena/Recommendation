@@ -1,0 +1,945 @@
+# Recommendation Engine - Software Architecture
+# Twitter-Inspired 7-Step Recommendation Pipeline
+
+## ============================================================================
+## 1. HIGH-LEVEL SYSTEM ARCHITECTURE
+## ============================================================================
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        API[RecommendationEngine API<br/>- recommend&#40;&#41;<br/>- record_interaction&#40;&#41;<br/>- get_statistics&#40;&#41;]
+        Cache[Cache Layer<br/>TTL: 300s<br/>Dict-based]
+    end
+    
+    subgraph "Configuration"
+        Config[RecommendationConfig<br/>- candidate_pool_size: 1500<br/>- in_network_ratio: 0.4<br/>- out_network_ratio: 0.5<br/>- social_proof_ratio: 0.1<br/>- light_ranking_top_k: 500<br/>- heavy_ranking_top_k: 100<br/>- exploration_strategy<br/>- safety_threshold: 0.7]
+    end
+    
+    subgraph "Step 1: Candidate Sourcing"
+        CS[CandidateSourcing<br/>Pipeline Orchestrator<br/>~1500 candidates]
+        INS[InNetworkSource<br/>40% - Following Graph<br/>Content from followed authors]
+        ONS[OutOfNetworkSource<br/>50% - Discovery<br/>Interest clusters + Trending + Similar users]
+        SPS[SocialProofSource<br/>10% - Social Signals<br/>Friend engagement data]
+    end
+    
+    subgraph "Step 2: Light Ranking"
+        LR[LightRanker<br/>Fast Feature Extraction<br/>Lightweight scoring<br/>Output: Top 500]
+        LF[Light Features:<br/>- Content age<br/>- Engagement velocity<br/>- Author influence<br/>- User-content match]
+    end
+    
+    subgraph "Step 3: Heavy Ranking"
+        HR[HeavyRanker<br/>Precise ML-based Ranking<br/>Multi-task predictions<br/>Output: Top 100]
+        MTM[MultiTaskModel<br/>Predictions:<br/>- P&#40;like&#41;<br/>- P&#40;retweet&#41;<br/>- P&#40;reply&#41;<br/>- P&#40;click&#41;<br/>- E&#40;dwell_time&#41;<br/>- P&#40;negative&#41;]
+        US[UtilityScorer<br/>Weighted Utility:<br/>utility = Σ w_i * P_i]
+    end
+    
+    subgraph "Step 4: Exploration"
+        EE[ExplorationEngine<br/>Balance Explore/Exploit<br/>Strategies:<br/>- ε-greedy<br/>- UCB<br/>- Thompson Sampling]
+        Stats[Content Stats Tracker<br/>- Impressions<br/>- Rewards<br/>- Success/Failure counts]
+    end
+    
+    subgraph "Step 5: Diversity"
+        DI[DiversityInjector<br/>Feed Diversity Constraints<br/>- Topic diversity<br/>- Author diversity<br/>- Content similarity check]
+    end
+    
+    subgraph "Step 6: Safety Filtering"
+        SF[SafetyFilter<br/>Multi-detector System<br/>Threshold: 0.7]
+        TD[ToxicityDetector<br/>Hate speech detection]
+        MD[MisinformationDetector<br/>Fake news detection]
+        SD[SpamDetector<br/>Spam pattern detection]
+        ND[NSFWDetector<br/>Adult content detection]
+    end
+    
+    subgraph "Step 7: Serving"
+        Response[RecommendationResponse<br/>- recommendations<br/>- latency<br/>- metadata]
+    end
+    
+    subgraph "Observability Infrastructure"
+        Logger[Logger System<br/>File-based Trace Logging<br/>Component-specific logs]
+        Tracer[RequestTracer<br/>Pipeline flow tracing<br/>Request comparison]
+        Analyzer[LogAnalyzer<br/>Metrics & Analysis<br/>Performance insights]
+    end
+    
+    API -->|initialize with| Config
+    API -->|check| Cache
+    Cache -.->|miss| API
+    
+    API -->|1. Generate candidates| CS
+    CS --> INS
+    CS --> ONS
+    CS --> SPS
+    CS -->|deduplicated ~1500| LR
+    
+    LR --> LF
+    LR -->|2. Top 500| HR
+    
+    HR --> MTM
+    HR --> US
+    HR -->|3. Top 100 with utility| EE
+    
+    EE <--> Stats
+    EE -->|4. Exploration adjusted| DI
+    
+    DI -->|5. Diversified| SF
+    
+    SF --> TD
+    SF --> MD
+    SF --> SD
+    SF --> ND
+    SF -->|6. Safe content| Response
+    
+    Response -->|7. Final results| API
+    API -->|cache & return| Cache
+    
+    API -.->|structured logging| Logger
+    Logger --> Tracer
+    Logger --> Analyzer
+    
+    style API fill:#2ecc71,stroke:#27ae60,stroke-width:4px,color:#fff
+    style Config fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    style CS fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+    style LR fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#fff
+    style HR fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff
+    style EE fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style DI fill:#16a085,stroke:#138d75,stroke-width:2px,color:#fff
+    style SF fill:#c0392b,stroke:#a93226,stroke-width:2px,color:#fff
+    style Response fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style Logger fill:#34495e,stroke:#2c3e50,stroke-width:2px,color:#fff
+```
+
+## ============================================================================
+## 2. DETAILED CLASS DIAGRAM WITH RELATIONSHIPS
+## ============================================================================
+
+```mermaid
+classDiagram
+    %% ========================================
+    %% Core Engine & Response
+    %% ========================================
+    class RecommendationEngine {
+        -config: RecommendationConfig
+        -logger: Logger
+        -candidate_sourcing: CandidateSourcing
+        -light_ranker: LightRanker
+        -heavy_ranker: HeavyRanker
+        -exploration_engine: ExplorationEngine
+        -diversity_injector: DiversityInjector
+        -safety_filter: SafetyFilter
+        -cache: Dict[str, Any]
+        -request_count: int
+        -total_latency: float
+        +__init__(config: Optional[RecommendationConfig])
+        +recommend(user_id: str, num_results: int, context: Optional[Dict]) RecommendationResponse
+        +record_interaction(user_id: str, content_id: str, interaction_type: str, **kwargs) None
+        +get_statistics() Dict[str, Any]
+    }
+    
+    class RecommendationResponse {
+        +recommendations: List[Any]
+        +latency: float
+        +metadata: Dict[str, Any]
+        +__init__(recommendations, latency, metadata)
+    }
+    
+    %% ========================================
+    %% Configuration
+    %% ========================================
+    class RecommendationConfig {
+        +candidate_pool_size: int = 1500
+        +in_network_ratio: float = 0.4
+        +out_network_ratio: float = 0.5
+        +social_proof_ratio: float = 0.1
+        +light_ranking_top_k: int = 500
+        +heavy_ranking_top_k: int = 100
+        +exploration_strategy: str = "epsilon_greedy"
+        +epsilon: float = 0.1
+        +ucb_confidence: float = 2.0
+        +max_same_author: int = 2
+        +max_topic_repetition: float = 0.3
+        +min_topic_diversity: int = 5
+        +safety_threshold: float = 0.7
+        +enable_toxicity_filter: bool = True
+        +enable_spam_filter: bool = True
+        +cache_ttl: int = 300
+        +target_latency_ms: int = 100
+        +enable_ab_testing: bool = True
+        +user_embedding_dim: int = 128
+        +content_embedding_dim: int = 128
+        +hidden_dim: int = 256
+        +log_level: str = "INFO"
+        +trace_dir: Path
+        +to_dict() Dict[str, Any]
+    }
+    
+    %% ========================================
+    %% Candidate Sourcing Layer
+    %% ========================================
+    class CandidateSourcing {
+        -config: RecommendationConfig
+        -logger: Logger
+        -in_network_source: InNetworkSource
+        -out_network_source: OutOfNetworkSource
+        -social_proof_source: SocialProofSource
+        +__init__(config: RecommendationConfig)
+        +generate_candidates(user_id: str) List~Dict~
+        -_deduplicate(candidates: List~Dict~) List~Dict~
+    }
+    
+    class InNetworkSource {
+        -config: RecommendationConfig
+        -logger: Logger
+        -following_graph: Dict[str, List[str]]
+        +__init__(config: RecommendationConfig)
+        +generate_candidates(user_id: str, limit: int) List~Dict~
+        -_get_following(user_id: str) List[str]
+        -_get_author_content(author_id: str, limit: int) List~Dict~
+    }
+    
+    class OutOfNetworkSource {
+        -config: RecommendationConfig
+        -logger: Logger
+        -interest_clusters: Dict[str, List[str]]
+        -trending_content: List~Dict~
+        +__init__(config: RecommendationConfig)
+        +generate_candidates(user_id: str, limit: int) List~Dict~
+        -_get_interest_based_content(user_id: str, limit: int) List~Dict~
+        -_get_trending_content(limit: int) List~Dict~
+        -_get_similar_users_content(user_id: str, limit: int) List~Dict~
+        -_get_user_interests(user_id: str) List[str]
+    }
+    
+    class SocialProofSource {
+        -config: RecommendationConfig
+        -logger: Logger
+        -friend_graph: Dict[str, List[str]]
+        +__init__(config: RecommendationConfig)
+        +generate_candidates(user_id: str, limit: int) List~Dict~
+        -_get_friends(user_id: str) List[str]
+        -_get_friend_engagements(friend_id: str, limit: int) List~Dict~
+    }
+    
+    %% ========================================
+    %% Ranking Layer
+    %% ========================================
+    class LightRanker {
+        -config: RecommendationConfig
+        -logger: Logger
+        +__init__(config: RecommendationConfig)
+        +rank(candidates: List~Dict~, user_id: str) List~Dict~
+        -_extract_light_features(candidate: Dict, user_id: str) Dict[str, float]
+        -_compute_light_score(features: Dict[str, float]) float
+    }
+    
+    class HeavyRanker {
+        -config: RecommendationConfig
+        -logger: Logger
+        -multi_task_model: MultiTaskModel
+        -utility_scorer: UtilityScorer
+        +__init__(config: RecommendationConfig)
+        +rank(candidates: List~Dict~, user_id: str) List~Dict~
+        -_extract_deep_features(candidate: Dict, user_id: str) Dict[str, Any]
+        -_get_user_preferences(user_id: str) Dict[str, float]
+    }
+    
+    class MultiTaskModel {
+        +predict(features: Dict[str, Any]) Dict[str, float]
+    }
+    
+    class UtilityScorer {
+        +score(predictions: Dict[str, float], user_preferences: Dict[str, float]) float
+    }
+    
+    %% ========================================
+    %% Optimization Layer
+    %% ========================================
+    class ExplorationEngine {
+        -config: RecommendationConfig
+        -logger: Logger
+        -content_stats: Dict[str, Dict[str, Any]]
+        -total_impressions: int
+        +__init__(config: RecommendationConfig)
+        +apply_exploration(ranked: List~Dict~, user_id: str) List~Dict~
+        -_epsilon_greedy(ranked: List~Dict~) List~Dict~
+        -_ucb(ranked: List~Dict~) List~Dict~
+        -_thompson_sampling(ranked: List~Dict~) List~Dict~
+        +record_impression(content_id: str, engagement: bool, reward: float)
+    }
+    
+    class DiversityInjector {
+        -config: RecommendationConfig
+        -logger: Logger
+        +__init__(config: RecommendationConfig)
+        +inject_diversity(ranked: List~Dict~) List~Dict~
+        -_meets_diversity_constraints(content: Dict, topics_seen: Set, authors_seen: Dict, content_texts: List) bool
+        -_is_too_similar(text: str, previous_texts: List[str]) bool
+    }
+    
+    %% ========================================
+    %% Safety & Quality Layer
+    %% ========================================
+    class SafetyFilter {
+        -config: RecommendationConfig
+        -logger: Logger
+        -toxicity_detector: ToxicityDetector
+        -misinfo_detector: MisinformationDetector
+        -spam_detector: SpamDetector
+        -nsfw_detector: NSFWDetector
+        -thresholds: Dict[str, float]
+        +__init__(config: RecommendationConfig)
+        +filter(candidates: List~Dict~) List~Dict~
+        -_assess_safety(content: Dict) float
+        -_log_filtered_content(content: Dict, safety_score: float)
+    }
+    
+    class ToxicityDetector {
+        +score(text: str) float
+    }
+    
+    class MisinformationDetector {
+        +score(content: Dict) float
+    }
+    
+    class SpamDetector {
+        +score(content: Dict) float
+    }
+    
+    class NSFWDetector {
+        +score(content: Dict) float
+    }
+    
+    %% ========================================
+    %% Utilities & Infrastructure
+    %% ========================================
+    class Logger {
+        <<utility>>
+        +get_logger(name: str, component: str) logging.Logger
+    }
+    
+    class RequestTracer {
+        -analyzer: LogAnalyzer
+        +__init__(trace_dir: Optional[str])
+        +trace_recommendation_flow(request_id: str) Dict[str, Any]
+        +print_recommendation_flow(request_id: str)
+        +compare_requests(request_id1: str, request_id2: str) Dict[str, Any]
+    }
+    
+    class LogAnalyzer {
+        +trace_request(request_id: str) List
+    }
+    
+    %% ========================================
+    %% Relationships - Composition
+    %% ========================================
+    RecommendationEngine *-- RecommendationConfig
+    RecommendationEngine *-- CandidateSourcing
+    RecommendationEngine *-- LightRanker
+    RecommendationEngine *-- HeavyRanker
+    RecommendationEngine *-- ExplorationEngine
+    RecommendationEngine *-- DiversityInjector
+    RecommendationEngine *-- SafetyFilter
+    RecommendationEngine ..> RecommendationResponse : creates
+    RecommendationEngine ..> Logger : uses
+    
+    CandidateSourcing *-- InNetworkSource
+    CandidateSourcing *-- OutOfNetworkSource
+    CandidateSourcing *-- SocialProofSource
+    CandidateSourcing --> RecommendationConfig
+    CandidateSourcing ..> Logger : uses
+    
+    InNetworkSource --> RecommendationConfig
+    InNetworkSource ..> Logger : uses
+    
+    OutOfNetworkSource --> RecommendationConfig
+    OutOfNetworkSource ..> Logger : uses
+    
+    SocialProofSource --> RecommendationConfig
+    SocialProofSource ..> Logger : uses
+    
+    LightRanker --> RecommendationConfig
+    LightRanker ..> Logger : uses
+    
+    HeavyRanker *-- MultiTaskModel
+    HeavyRanker *-- UtilityScorer
+    HeavyRanker --> RecommendationConfig
+    HeavyRanker ..> Logger : uses
+    
+    ExplorationEngine --> RecommendationConfig
+    ExplorationEngine ..> Logger : uses
+    
+    DiversityInjector --> RecommendationConfig
+    DiversityInjector ..> Logger : uses
+    
+    SafetyFilter *-- ToxicityDetector
+    SafetyFilter *-- MisinformationDetector
+    SafetyFilter *-- SpamDetector
+    SafetyFilter *-- NSFWDetector
+    SafetyFilter --> RecommendationConfig
+    SafetyFilter ..> Logger : uses
+    
+    RequestTracer *-- LogAnalyzer
+```
+
+## ============================================================================
+## 3. RECOMMENDATION FLOW SEQUENCE DIAGRAM
+## ============================================================================
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as RecommendationEngine
+    participant Cache
+    participant Config as RecommendationConfig
+    participant CS as CandidateSourcing
+    participant INS as InNetworkSource
+    participant ONS as OutOfNetworkSource
+    participant SPS as SocialProofSource
+    participant LR as LightRanker
+    participant HR as HeavyRanker
+    participant MTM as MultiTaskModel
+    participant US as UtilityScorer
+    participant EE as ExplorationEngine
+    participant DI as DiversityInjector
+    participant SF as SafetyFilter
+    participant TD as ToxicityDetector
+    participant Log as Logger
+    
+    User->>API: recommend(user_id="agent_001", num_results=100)
+    activate API
+    
+    API->>Log: info("Generating recommendations")
+    API->>Config: Read configuration
+    Config-->>API: Config parameters
+    
+    API->>Cache: Check cache(user_id)
+    alt Cache Hit
+        Cache-->>API: Cached recommendations
+        API-->>User: RecommendationResponse (cached=True)
+    else Cache Miss
+        Cache-->>API: None
+        
+        Note over API,SPS: STEP 1: CANDIDATE SOURCING (~1500 candidates)
+        API->>CS: generate_candidates(user_id)
+        activate CS
+        
+        par Parallel Candidate Generation
+            CS->>INS: generate_candidates(user_id, 600)
+            activate INS
+            Note right of INS: 40% In-Network<br/>Following graph
+            INS->>INS: _get_following(user_id)
+            INS->>INS: _get_author_content()
+            INS-->>CS: 600 in-network candidates
+            deactivate INS
+        and
+            CS->>ONS: generate_candidates(user_id, 750)
+            activate ONS
+            Note right of ONS: 50% Out-of-Network<br/>Interest + Trending + Similar
+            ONS->>ONS: _get_interest_based_content()
+            ONS->>ONS: _get_trending_content()
+            ONS->>ONS: _get_similar_users_content()
+            ONS-->>CS: 750 out-network candidates
+            deactivate ONS
+        and
+            CS->>SPS: generate_candidates(user_id, 150)
+            activate SPS
+            Note right of SPS: 10% Social Proof<br/>Friend engagement
+            SPS->>SPS: _get_friends(user_id)
+            SPS->>SPS: _get_friend_engagements()
+            SPS-->>CS: 150 social proof candidates
+            deactivate SPS
+        end
+        
+        CS->>CS: _deduplicate(all_candidates)
+        CS->>Log: info("Candidates generated", count=1500)
+        CS-->>API: 1500 deduplicated candidates
+        deactivate CS
+        
+        Note over API,LR: STEP 2: LIGHT RANKING (Top 500)
+        API->>LR: rank(candidates, user_id)
+        activate LR
+        loop For each candidate
+            LR->>LR: _extract_light_features(candidate, user_id)
+            Note right of LR: Features:<br/>- Content age<br/>- Engagement velocity<br/>- Author influence<br/>- User match
+            LR->>LR: _compute_light_score(features)
+        end
+        LR->>LR: Sort by light_score
+        LR->>Log: debug("Light ranking complete", count=500)
+        LR-->>API: Top 500 light-ranked candidates
+        deactivate LR
+        
+        Note over API,HR: STEP 3: HEAVY RANKING (Top 100)
+        API->>HR: rank(candidates, user_id)
+        activate HR
+        HR->>HR: _get_user_preferences(user_id)
+        loop For each candidate
+            HR->>HR: _extract_deep_features(candidate, user_id)
+            Note right of HR: Deep features:<br/>- User embeddings<br/>- Content embeddings<br/>- Topic match
+            HR->>MTM: predict(features)
+            activate MTM
+            MTM->>MTM: Multi-task neural network
+            MTM-->>HR: {p_like, p_retweet, p_reply, p_click, dwell_time, p_negative}
+            deactivate MTM
+            HR->>US: score(predictions, user_preferences)
+            activate US
+            US->>US: utility = Σ(w_i * P_i)
+            US-->>HR: utility_score
+            deactivate US
+        end
+        HR->>HR: Sort by utility
+        HR->>Log: debug("Heavy ranking complete", count=100)
+        HR-->>API: Top 100 utility-ranked candidates
+        deactivate HR
+        
+        Note over API,EE: STEP 4: EXPLORATION
+        API->>EE: apply_exploration(ranked, user_id)
+        activate EE
+        alt Strategy: epsilon_greedy
+            EE->>EE: _epsilon_greedy(ranked)
+            Note right of EE: Random exploration<br/>with probability ε=0.1
+        else Strategy: ucb
+            EE->>EE: _ucb(ranked)
+            Note right of EE: Upper Confidence Bound<br/>UCB = mean + bonus
+        else Strategy: thompson_sampling
+            EE->>EE: _thompson_sampling(ranked)
+            Note right of EE: Bayesian sampling<br/>Beta distribution
+        end
+        EE->>EE: Re-sort by adjusted utility
+        EE->>Log: debug("Exploration applied", strategy)
+        EE-->>API: Exploration-adjusted candidates
+        deactivate EE
+        
+        Note over API,DI: STEP 5: DIVERSITY INJECTION
+        API->>DI: inject_diversity(explored)
+        activate DI
+        DI->>DI: Initialize tracking (topics_seen, authors_seen)
+        loop For each candidate
+            DI->>DI: _meets_diversity_constraints(content, topics, authors)
+            Note right of DI: Check:<br/>- Topic diversity<br/>- Author diversity<br/>- Content similarity
+            alt Meets constraints
+                DI->>DI: Add to diversified list
+                DI->>DI: Update tracking
+            else Violates constraints
+                DI->>DI: Skip candidate
+            end
+        end
+        DI->>Log: debug("Diversity injected", unique_topics, unique_authors)
+        DI-->>API: Diversified candidates
+        deactivate DI
+        
+        Note over API,SF: STEP 6: SAFETY FILTERING
+        API->>SF: filter(diversified)
+        activate SF
+        loop For each candidate
+            SF->>TD: score(text)
+            TD-->>SF: toxicity_score
+            SF->>SF: Check misinformation
+            SF->>SF: Check spam
+            SF->>SF: Check NSFW
+            SF->>SF: _assess_safety(content)
+            Note right of SF: safety = 1.0 * Π(1 - score_i)
+            alt safety >= threshold (0.7)
+                SF->>SF: Keep candidate
+            else safety < threshold
+                SF->>Log: warning("Content filtered", content_id, safety_score)
+                SF->>SF: Remove candidate
+            end
+        end
+        SF->>Log: info("Safety filtering complete", removed_count)
+        SF-->>API: Safe, filtered candidates
+        deactivate SF
+        
+        Note over API,User: STEP 7: SERVING & RESPONSE
+        API->>API: Trim to num_results (100)
+        API->>API: Calculate latency
+        API->>API: Build metadata
+        API->>Cache: Set cache(user_id, results, ttl=300)
+        API->>Log: info("Recommendations generated", count, latency_ms)
+        API-->>User: RecommendationResponse(recommendations, latency, metadata)
+    end
+    deactivate API
+```
+
+## ============================================================================
+## 4. DATA FLOW & TRANSFORMATION PIPELINE
+## ============================================================================
+
+```mermaid
+flowchart TD
+    subgraph Input["Input Layer"]
+        USER[User ID: agent_001]
+        NUM[Num Results: 100]
+        CTX[Context: device, time, location]
+    end
+    
+    subgraph Sources["Candidate Sources"]
+        direction TB
+        IN[In-Network Source<br/>Following Graph<br/>40% ≈ 600 candidates]
+        OUT[Out-of-Network Source<br/>Interest: 60%<br/>Trending: 30%<br/>Similar: 10%<br/>50% ≈ 750 candidates]
+        SOC[Social Proof Source<br/>Friend Engagement<br/>10% ≈ 150 candidates]
+    end
+    
+    subgraph Pool["Candidate Pool"]
+        MERGE[Merge & Deduplicate<br/>~1500 unique candidates]
+    end
+    
+    subgraph Light["Light Ranking Features"]
+        direction TB
+        AGE[Content Age<br/>age_score = 1 - hours/48]
+        VEL[Engagement Velocity<br/>velocity_score = engagements/1000]
+        INF[Author Influence<br/>influence_score = followers/100000]
+        MAT[User-Content Match<br/>match_score from history]
+    end
+    
+    subgraph LScore["Light Scoring"]
+        LS[Light Score<br/>= 0.2*age + 0.3*velocity<br/>+ 0.2*influence + 0.3*match<br/>Sort & Select Top 500]
+    end
+    
+    subgraph Deep["Heavy Ranking Features"]
+        direction TB
+        UE[User Embedding<br/>128-dim vector]
+        CE[Content Embedding<br/>128-dim vector]
+        DF[Deep Features<br/>engagement, age, topics]
+    end
+    
+    subgraph Multi["Multi-Task Predictions"]
+        direction TB
+        PRED[Neural Network Predictions:<br/>P&#40;like&#41; P&#40;retweet&#41; P&#40;reply&#41;<br/>P&#40;click&#41; E&#40;dwell_time&#41;<br/>P&#40;negative_feedback&#41;]
+    end
+    
+    subgraph Util["Utility Computation"]
+        UT[Utility Score<br/>= w_like*P&#40;like&#41; + w_rt*P&#40;retweet&#41;<br/>+ w_reply*P&#40;reply&#41; + w_click*P&#40;click&#41;<br/>+ w_dwell*E&#40;dwell&#41; - w_neg*P&#40;neg&#41;<br/>Sort & Select Top 100]
+    end
+    
+    subgraph Explore["Exploration Strategies"]
+        direction TB
+        EPS[ε-greedy: Random boost with P=ε]
+        UCB[UCB: mean + √&#40;2*ln&#40;N&#41;/n&#41;]
+        TS[Thompson: Beta&#40;α,β&#41; sampling]
+    end
+    
+    subgraph Diverse["Diversity Constraints"]
+        direction TB
+        TOP[Topic Diversity<br/>max_topic_repetition: 0.3]
+        AUTH[Author Diversity<br/>max_same_author: 2]
+        SIM[Content Similarity<br/>Jaccard threshold: 0.7]
+    end
+    
+    subgraph Safety["Safety Detectors"]
+        direction TB
+        TOX[Toxicity Detector<br/>threshold: 0.7]
+        MIS[Misinformation Detector<br/>threshold: 0.7]
+        SPA[Spam Detector<br/>threshold: 0.7]
+        NSW[NSFW Detector<br/>threshold: 0.8]
+    end
+    
+    subgraph Final["Final Assembly"]
+        SAFE[Safety Score<br/>= 1.0 * Π&#40;1-score_i&#41;<br/>Keep if score ≥ 0.7]
+        TRIM[Trim to num_results]
+    end
+    
+    subgraph Output["Output Layer"]
+        direction TB
+        REC[Recommendations List<br/>Top N ranked items]
+        LAT[Latency Metrics<br/>Pipeline timing]
+        META[Metadata<br/>candidate_count<br/>filtered_count<br/>pipeline_steps]
+    end
+    
+    USER --> IN
+    USER --> OUT
+    USER --> SOC
+    
+    IN --> MERGE
+    OUT --> MERGE
+    SOC --> MERGE
+    
+    MERGE --> AGE
+    MERGE --> VEL
+    MERGE --> INF
+    MERGE --> MAT
+    
+    AGE --> LS
+    VEL --> LS
+    INF --> LS
+    MAT --> LS
+    
+    LS --> UE
+    LS --> CE
+    LS --> DF
+    
+    UE --> PRED
+    CE --> PRED
+    DF --> PRED
+    
+    PRED --> UT
+    
+    UT --> EPS
+    UT --> UCB
+    UT --> TS
+    
+    EPS --> TOP
+    UCB --> TOP
+    TS --> TOP
+    
+    TOP --> AUTH
+    AUTH --> SIM
+    
+    SIM --> TOX
+    TOX --> MIS
+    MIS --> SPA
+    SPA --> NSW
+    
+    NSW --> SAFE
+    SAFE --> TRIM
+    
+    TRIM --> REC
+    TRIM --> LAT
+    TRIM --> META
+    
+    REC --> Output
+    LAT --> Output
+    META --> Output
+    
+    style USER fill:#3498db,color:#fff
+    style MERGE fill:#e74c3c,color:#fff
+    style LS fill:#f39c12,color:#fff
+    style UT fill:#e67e22,color:#fff
+    style EPS fill:#9b59b6,color:#fff
+    style UCB fill:#9b59b6,color:#fff
+    style TS fill:#9b59b6,color:#fff
+    style TOP fill:#16a085,color:#fff
+    style TOX fill:#c0392b,color:#fff
+    style MIS fill:#c0392b,color:#fff
+    style SPA fill:#c0392b,color:#fff
+    style NSW fill:#c0392b,color:#fff
+    style REC fill:#2ecc71,color:#fff
+```
+
+## ============================================================================
+## 5. LOGGING & OBSERVABILITY INFRASTRUCTURE
+## ============================================================================
+
+```mermaid
+graph TB
+    subgraph "Application Components"
+        direction TB
+        RE[RecommendationEngine<br/>recommendation_engine.py]
+        CS[CandidateSourcing<br/>candidate_sourcing.py]
+        INS[InNetworkSource<br/>in_network_source.py]
+        ONS[OutOfNetworkSource<br/>out_network_source.py]
+        SPS[SocialProofSource<br/>social_proof_source.py]
+        LR[LightRanker<br/>light_ranker.py]
+        HR[HeavyRanker<br/>heavy_ranker.py]
+        EE[ExplorationEngine<br/>exploration_engine.py]
+        DI[DiversityInjector<br/>diversity_injector.py]
+        SF[SafetyFilter<br/>safety_filter.py]
+    end
+    
+    subgraph "Logging Utilities"
+        direction TB
+        LOGGER[Logger Utility<br/>logger.py<br/>get_logger&#40;name, component&#41;]
+        DECO[Performance Decorators<br/>decorators.py<br/>@log_performance<br/>@log_errors<br/>@trace_execution]
+    end
+    
+    subgraph "Trace Storage System"
+        direction TB
+        ROOT[trace/recommendation/]
+        
+        ROOT --> RE_LOG[recommendation_engine.log]
+        ROOT --> CS_LOG[candidate_sourcing.log]
+        ROOT --> INS_LOG[in_network_source.log]
+        ROOT --> ONS_LOG[out_network_source.log]
+        ROOT --> SPS_LOG[social_proof_source.log]
+        ROOT --> LR_LOG[light_ranker.log]
+        ROOT --> HR_LOG[heavy_ranker.log]
+        ROOT --> EE_LOG[exploration_engine.log]
+        ROOT --> DI_LOG[diversity_injector.log]
+        ROOT --> SF_LOG[safety_filter.log]
+    end
+    
+    subgraph "Analysis & Tracing Tools"
+        direction TB
+        TRACER[RequestTracer<br/>trace_request.py<br/>- trace_recommendation_flow&#40;&#41;<br/>- print_recommendation_flow&#40;&#41;<br/>- compare_requests&#40;&#41;]
+        ANALYZER[LogAnalyzer<br/>log_analyzer.py<br/>- trace_request&#40;&#41;<br/>- analyze_logs&#40;&#41;<br/>- get_metrics&#40;&#41;]
+    end
+    
+    subgraph "Monitoring Outputs"
+        direction TB
+        METRICS[Performance Metrics<br/>- Latency per stage<br/>- Candidate counts<br/>- Filter statistics<br/>- Error rates]
+        TRACE[Request Traces<br/>- Full pipeline flow<br/>- Timing breakdown<br/>- Data transformations]
+        ERRORS[Error Analysis<br/>- Exception tracking<br/>- Stack traces<br/>- Error patterns]
+    end
+    
+    RE -.->|logs| LOGGER
+    CS -.->|logs| LOGGER
+    INS -.->|logs| LOGGER
+    ONS -.->|logs| LOGGER
+    SPS -.->|logs| LOGGER
+    LR -.->|logs| LOGGER
+    HR -.->|logs| LOGGER
+    EE -.->|logs| LOGGER
+    DI -.->|logs| LOGGER
+    SF -.->|logs| LOGGER
+    
+    LOGGER -->|writes| ROOT
+    DECO -.->|uses| LOGGER
+    
+    ROOT --> TRACER
+    ROOT --> ANALYZER
+    
+    TRACER --> METRICS
+    TRACER --> TRACE
+    ANALYZER --> METRICS
+    ANALYZER --> ERRORS
+    
+    style LOGGER fill:#f39c12,stroke:#d68910,stroke-width:3px,color:#000
+    style DECO fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#000
+    style ROOT fill:#34495e,stroke:#2c3e50,stroke-width:3px,color:#fff
+    style TRACER fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style ANALYZER fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style METRICS fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style TRACE fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    style ERRORS fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+```
+
+## ============================================================================
+## 6. CONFIGURATION & DEPENDENCY INJECTION
+## ============================================================================
+
+```mermaid
+graph TB
+    CFG[RecommendationConfig<br/>Central Configuration Hub]
+    
+    subgraph "Sourcing Configuration"
+        CFG -->|candidate_pool_size: 1500<br/>in_network_ratio: 0.4<br/>out_network_ratio: 0.5<br/>social_proof_ratio: 0.1| CS[CandidateSourcing]
+        CFG --> INS[InNetworkSource]
+        CFG --> ONS[OutOfNetworkSource]
+        CFG --> SPS[SocialProofSource]
+    end
+    
+    subgraph "Ranking Configuration"
+        CFG -->|light_ranking_top_k: 500| LR[LightRanker]
+        CFG -->|heavy_ranking_top_k: 100<br/>user_embedding_dim: 128<br/>content_embedding_dim: 128<br/>hidden_dim: 256| HR[HeavyRanker]
+    end
+    
+    subgraph "Exploration Configuration"
+        CFG -->|exploration_strategy: epsilon_greedy<br/>epsilon: 0.1<br/>ucb_confidence: 2.0| EE[ExplorationEngine]
+    end
+    
+    subgraph "Diversity Configuration"
+        CFG -->|max_same_author: 2<br/>max_topic_repetition: 0.3<br/>min_topic_diversity: 5| DI[DiversityInjector]
+    end
+    
+    subgraph "Safety Configuration"
+        CFG -->|safety_threshold: 0.7<br/>enable_toxicity_filter: true<br/>enable_spam_filter: true| SF[SafetyFilter]
+    end
+    
+    subgraph "Serving Configuration"
+        CFG -->|cache_ttl: 300<br/>target_latency_ms: 100| RE[RecommendationEngine]
+    end
+    
+    subgraph "Logging Configuration"
+        CFG -->|log_level: INFO<br/>trace_dir: trace/| LOG[Logger]
+    end
+    
+    style CFG fill:#3498db,stroke:#2980b9,stroke-width:5px,color:#fff
+    style CS fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+    style LR fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#fff
+    style HR fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff
+    style EE fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style DI fill:#16a085,stroke:#138d75,stroke-width:2px,color:#fff
+    style SF fill:#c0392b,stroke:#a93226,stroke-width:2px,color:#fff
+    style RE fill:#2ecc71,stroke:#27ae60,stroke-width:2px,color:#fff
+    style LOG fill:#34495e,stroke:#2c3e50,stroke-width:2px,color:#fff
+```
+
+## ============================================================================
+## 7. DIRECTORY & MODULE STRUCTURE
+## ============================================================================
+
+```mermaid
+graph TD
+    ROOT[Recommendation/<br/>__init__.py]
+    
+    ROOT --> CONFIG_DIR[config/]
+    CONFIG_DIR --> RC[rec_config.py<br/>RecommendationConfig<br/>get_default_config&#40;&#41;]
+    
+    ROOT --> CORE_DIR[core/]
+    CORE_DIR --> REC_ENGINE[recommendation_engine.py<br/>RecommendationEngine<br/>RecommendationResponse]
+    
+    ROOT --> SOURCING_DIR[sourcing/]
+    SOURCING_DIR --> CS_FILE[candidate_sourcing.py<br/>CandidateSourcing]
+    SOURCING_DIR --> INS_FILE[in_network_source.py<br/>InNetworkSource]
+    SOURCING_DIR --> ONS_FILE[out_network_source.py<br/>OutOfNetworkSource]
+    SOURCING_DIR --> SPS_FILE[social_proof_source.py<br/>SocialProofSource]
+    
+    ROOT --> RANKING_DIR[ranking/]
+    RANKING_DIR --> LR_FILE[light_ranker.py<br/>LightRanker]
+    RANKING_DIR --> HR_FILE[heavy_ranker.py<br/>HeavyRanker<br/>MultiTaskModel<br/>UtilityScorer]
+    RANKING_DIR --> EE_FILE[exploration_engine.py<br/>ExplorationEngine]
+    RANKING_DIR --> DI_FILE[diversity_injector.py<br/>DiversityInjector]
+    
+    ROOT --> FILTERS_DIR[filters/]
+    FILTERS_DIR --> SF_FILE[safety_filter.py<br/>SafetyFilter<br/>ToxicityDetector<br/>MisinformationDetector<br/>SpamDetector<br/>NSFWDetector]
+    
+    ROOT --> UTILS_DIR[utils/]
+    UTILS_DIR --> LOGGER_FILE[logger.py<br/>get_logger&#40;&#41;]
+    UTILS_DIR --> DECO_FILE[decorators.py<br/>@log_performance<br/>@log_errors<br/>@trace_execution]
+    UTILS_DIR --> TRACER_FILE[trace_request.py<br/>RequestTracer]
+    UTILS_DIR --> ANALYZER_FILE[log_analyzer.py<br/>LogAnalyzer]
+    
+    ROOT --> TRACE_DIR[trace/]
+    TRACE_DIR --> REC_LOGS[recommendation/<br/>*.log files]
+    TRACE_DIR --> OTHER_LOGS[logs/<br/>ab_test/<br/>candidate/<br/>diversity/<br/>errors/<br/>exploration/<br/>performance/<br/>ranking/<br/>serving/]
+    
+    ROOT --> EXAMPLES_DIR[examples/]
+    EXAMPLES_DIR --> REC_EX[recommendation_example.py]
+    EXAMPLES_DIR --> LOG_EX[logging_example.py]
+    
+    ROOT --> DOCS[README.md<br/>LOGGING_SYSTEM.md<br/>Structure.mermaid]
+    
+    style ROOT fill:#2ecc71,stroke:#27ae60,stroke-width:3px,color:#fff
+    style CONFIG_DIR fill:#3498db,stroke:#2980b9,stroke-width:2px,color:#fff
+    style CORE_DIR fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#fff
+    style SOURCING_DIR fill:#f39c12,stroke:#d68910,stroke-width:2px,color:#fff
+    style RANKING_DIR fill:#e67e22,stroke:#d35400,stroke-width:2px,color:#fff
+    style FILTERS_DIR fill:#c0392b,stroke:#a93226,stroke-width:2px,color:#fff
+    style UTILS_DIR fill:#9b59b6,stroke:#8e44ad,stroke-width:2px,color:#fff
+    style TRACE_DIR fill:#34495e,stroke:#2c3e50,stroke-width:2px,color:#fff
+```
+
+## ============================================================================
+## ARCHITECTURE SUMMARY
+## ============================================================================
+
+### Design Patterns Implemented:
+1. **Pipeline Architecture**: 7-step sequential processing with clear stage boundaries
+2. **Strategy Pattern**: Multiple exploration algorithms (ε-greedy, UCB, Thompson Sampling)
+3. **Composite Pattern**: Multiple candidate sources aggregated into unified pool
+4. **Dependency Injection**: RecommendationConfig injected throughout system
+5. **Observer Pattern**: Centralized logging infrastructure with component-specific loggers
+6. **Decorator Pattern**: Performance monitoring via @log_performance, @log_errors
+7. **Factory Pattern**: Model instantiation (MultiTaskModel, UtilityScorer, Safety detectors)
+
+### Key Characteristics:
+- **Latency Target**: < 100ms end-to-end
+- **Candidate Pool**: ~1500 → 500 → 100 → N final recommendations
+- **Cache TTL**: 300 seconds
+- **Async/Await**: Full async support for parallel operations
+- **File-based Logging**: Structured trace logging (NO console output)
+- **Modularity**: Each component independently testable and replaceable
+- **Configuration-driven**: Single source of truth for all parameters
+
+### Technology Stack:
+- Python 3.8+
+- asyncio for concurrency
+- Python logging module (file-based)
+- Dataclasses for configuration
+- Type hints throughout
+
+### Performance Optimizations:
+- Parallel candidate source fetching
+- Light ranking before heavy ranking (funnel approach)
+- Caching with TTL
+- Efficient deduplication
+- Top-K selection at each stage
+
