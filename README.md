@@ -116,57 +116,95 @@ Recommendation Engine
 ## 📁 Directory Structure
 
 ```
-recommendation/
+Recommendation/
 │
-├── models/                        # ML models
+├── config/                        # Configuration
 │   ├── __init__.py
-│   ├── two_tower_model.py        # Dual-tower recommendation model
-│   ├── candidate_generation.py   # Candidate generation models
-│   ├── heavy_ranker.py           # Heavy ranking model
-│   └── light_ranker.py           # Light ranking model
+│   └── rec_config.py             # RecommendationConfig dataclass
 │
-├── sourcing/                      # Candidate sources
+├── core/                          # Core engine
 │   ├── __init__.py
-│   ├── in_network_source.py      # In-network content source
-│   ├── out_network_source.py     # Out-of-network content source
-│   ├── social_proof_source.py    # Social proof source
-│   └── trending_source.py        # Trending content source
+│   └── recommendation_engine.py  # RecommendationEngine, RecommendationResponse
 │
-├── ranking/                       # Ranking systems
+├── sourcing/                      # Candidate sources (Step 1)
 │   ├── __init__.py
-│   ├── utility_scorer.py         # Utility scoring
-│   ├── multi_task_model.py       # Multi-task prediction model
-│   ├── exploration_engine.py     # Exploration strategies
-│   └── diversity_injector.py     # Diversity injection
+│   ├── candidate_sourcing.py     # CandidateSourcing orchestrator
+│   ├── in_network_source.py      # InNetworkSource - content from followed authors
+│   ├── out_network_source.py     # OutOfNetworkSource - interest clusters, trending, similar users
+│   └── social_proof_source.py    # SocialProofSource - friend engagement signals
 │
-├── filters/                       # Filtering systems
+├── ranking/                       # Ranking systems (Steps 2-4)
 │   ├── __init__.py
-│   ├── safety_filter.py          # Safety filtering
-│   ├── quality_filter.py         # Quality filtering
-│   ├── dedup_filter.py           # Deduplication filter
-│   └── personalization_filter.py # Personalization filter
+│   ├── light_ranker.py           # LightRanker - fast lightweight features
+│   ├── heavy_ranker.py           # HeavyRanker, MultiTaskModel, UtilityScorer
+│   ├── exploration_engine.py     # ExplorationEngine - ε-greedy, UCB, Thompson Sampling
+│   └── diversity_injector.py     # DiversityInjector - topic/author/content diversity
 │
-├── serving/                       # Serving infrastructure
+├── filters/                       # Filtering systems (Step 6)
 │   ├── __init__.py
-│   ├── feed_mixer.py             # Feed mixing
-│   ├── real_time_ranker.py       # Real-time ranking
-│   ├── ab_test_framework.py      # A/B testing
-│   └── recommendation_api.py     # Recommendation API
+│   └── safety_filter.py          # SafetyFilter + all detector classes:
+│                                  #   ToxicityDetector, MisinformationDetector,
+│                                  #   SpamDetector, NSFWDetector
 │
-├── monitoring/                    # Monitoring
+├── utils/                         # Utilities & infrastructure
 │   ├── __init__.py
-│   ├── rec_metrics.py            # Recommendation metrics
-│   ├── bias_monitor.py           # Bias monitoring
-│   └── feedback_collector.py     # Feedback collection
+│   ├── logger.py                 # get_logger() - file-based trace logging
+│   ├── decorators.py             # @log_performance, @log_errors, @trace_execution
+│   ├── trace_request.py          # RequestTracer - pipeline flow tracing
+│   └── log_analyzer.py           # LogAnalyzer - metrics & analysis
 │
-├── tests/                         # Test suite
-│   ├── test_sourcing.py
-│   ├── test_ranking.py
-│   ├── test_serving.py
-│   └── test_ab_testing.py
+├── trace/                         # Trace logging storage
+│   ├── recommendation/           # Component-specific log files
+│   │   ├── recommendation_engine.log
+│   │   ├── candidate_sourcing.log
+│   │   ├── in_network_source.log
+│   │   ├── out_network_source.log
+│   │   ├── social_proof_source.log
+│   │   ├── light_ranker.log
+│   │   ├── heavy_ranker.log
+│   │   ├── exploration_engine.log
+│   │   ├── diversity_injector.log
+│   │   └── safety_filter.log
+│   └── logs/                     # Additional log categories
+│       ├── ab_test/
+│       ├── candidate/
+│       ├── diversity/
+│       ├── errors/
+│       ├── exploration/
+│       ├── performance/
+│       └── ranking/
 │
-└── README.md                      # This file
+├── examples/                      # Example usage
+│   ├── __init__.py
+│   ├── recommendation_example.py # Complete pipeline example
+│   └── logging_example.py        # Logging system demonstration
+│
+├── __init__.py                    # Package initialization
+├── test_logging.py               # Logging system test
+├── Structure.mermaid             # System architecture diagram
+├── README.md                     # This file
+├── LOGGING_SYSTEM.md             # Logging documentation
+└── LICENSE                       # License file
 ```
+
+### Implementation Status
+
+✅ **Fully Implemented**:
+- 7-step recommendation pipeline
+- All candidate sourcing (In-Network, Out-of-Network, Social Proof)
+- Light ranking with feature extraction
+- Heavy ranking with multi-task model (mock predictions)
+- Exploration strategies (ε-greedy, UCB, Thompson Sampling)
+- Diversity injection (topic, author, content similarity)
+- Safety filtering (toxicity, misinformation, spam, NSFW detection)
+- File-based trace logging infrastructure
+- Request tracing and log analysis
+
+🚧 **Planned/Future**:
+- Dual-tower neural network model (currently using mock predictions)
+- Real-time serving infrastructure (feed mixer, A/B testing framework)
+- Monitoring dashboards (metrics, bias detection)
+- Comprehensive test suite
 
 ---
 
