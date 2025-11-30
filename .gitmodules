@@ -1,0 +1,6 @@
+[submodule "external/Agent"]
+	path = external/Agent
+	url = https://github.com/Social-Arena/Agent
+[submodule "external/Feed"]
+	path = external/Feed
+	url = https://github.com/Social-Arena/Feed

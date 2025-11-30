@@ -9,22 +9,46 @@ A comprehensive Twitter-style recommendation system implementing advanced algori
 ```bash
 git clone https://github.com/Social-Arena/Recommendation.git
 cd Recommendation
+
+# Initialize submodules (Agent and Feed libraries)
+git submodule update --init --recursive
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Install submodules
+pip install -e external/Feed
+pip install -e external/Agent
 ```
 
 ### Basic Usage
 
 ```python
-from utils.logger import get_logger, log_performance
-from utils.decorators import LogContext
+from recommendation import CentralizedRecommendationSystem, BalancedStrategy
+import feed
+from agent import Agent
 
-# Initialize logging system
-logger = get_logger("RecommendationEngine", component="main")
+# Initialize recommendation system
+rec_system = CentralizedRecommendationSystem(
+    strategy=BalancedStrategy(explore_ratio=0.2)
+)
 
-# Set request context for tracing
-with LogContext(request_id="req_123", user_id="user_456"):
-    # Your recommendation logic here
-    logger.info("Starting recommendation generation")
+# Create agents
+agent = Agent(agent_id="001", username="alice", bio="Tech enthusiast")
+rec_system.add_agent("001", {"interests": ["tech", "AI"]})
+
+# Create and ingest content
+new_feed = feed.Feed(
+    id=feed.generate_feed_id(),
+    text="Hello Social Arena! #AI #Python",
+    author_id="001",
+    feed_type="post"
+)
+rec_system.ingest_feed(new_feed)
+
+# Get personalized recommendations
+recommendations = rec_system.fetch("001", {"max_feeds": 10})
+print(f"Showing {len(recommendations['feeds'])} personalized feeds")
 ```
 
 ## 📊 Core Features
@@ -57,26 +81,22 @@ with LogContext(request_id="req_123", user_id="user_456"):
 
 ```
 Recommendation/
-├── engines/
-│   ├── candidate_generator.py    # Tweet candidate generation
-│   ├── light_ranker.py          # Fast initial scoring
-│   ├── heavy_ranker.py          # Deep learning ranking
-│   ├── exploration_engine.py    # Exploration strategies
-│   ├── diversity_injector.py    # Content diversity
-│   └── safety_filter.py         # Content moderation
-├── models/
-│   ├── dual_tower.py           # User/content embeddings
-│   ├── multitask_model.py      # Multi-objective learning
-│   └── feature_extractors.py   # Feature engineering
-├── strategies/
-│   ├── epsilon_greedy.py       # ε-greedy exploration
-│   ├── ucb.py                  # Upper Confidence Bound
-│   └── thompson_sampling.py    # Bayesian optimization
-└── utils/
-    ├── logger.py               # Centralized logging
-    ├── decorators.py           # Performance tracking
-    ├── log_analyzer.py         # Log analysis tools
-    └── trace_request.py        # Request tracing
+├── recommendation/             # Core recommendation package
+│   ├── __init__.py            # Package exports
+│   ├── base.py                # Base classes and protocols
+│   ├── system.py              # Main recommendation system
+│   ├── strategies.py          # Ranking strategies
+│   └── example.py             # Usage example
+├── external/                  # External dependencies
+│   ├── Agent/                 # AI agent framework
+│   └── Feed/                  # Twitter data structures
+├── utils/                     # Logging and utilities
+│   ├── logger.py              # Centralized logging
+│   ├── decorators.py          # Performance tracking
+│   ├── log_analyzer.py        # Log analysis tools
+│   └── trace_request.py       # Request tracing
+└── trace/                     # Runtime logs
+    └── logs/                  # Component-specific logs
 ```
 
 ### Recommendation Pipeline
