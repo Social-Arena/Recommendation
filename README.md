@@ -10,13 +10,15 @@ A comprehensive Twitter-style recommendation system implementing advanced algori
 git clone https://github.com/Social-Arena/Recommendation.git
 cd Recommendation
 
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate
+
 # Initialize submodules (Agent and Feed libraries)
 git submodule update --init --recursive
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install submodules
+# Install the package and all dependencies
+pip install -e .
 pip install -e external/Feed
 pip install -e external/Agent
 ```
