@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "social-arena-recommendation"
+version = "1.0.0"
+description = "Twitter-style recommendation system for Social Arena"
+readme = "README.md"
+authors = [
+    {name = "Social Arena Team"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["recommendation-system", "social-media", "twitter", "agent-simulation"]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Social-Arena/Recommendation"
+"Bug Reports" = "https://github.com/Social-Arena/Recommendation/issues"
+Source = "https://github.com/Social-Arena/Recommendation"
+
+[tool.setuptools.packages.find]
+exclude = ["tests*", "examples*", "trace*"]
+
